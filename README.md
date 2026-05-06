@@ -172,7 +172,76 @@ Content-Type: application/json
 
 ---
 
-## Admin 接口
+## 系统对接（你的业务系统调）
+
+### 一键登录直达 Gemini
+
+`GET /api/login?user_token=<token>&car=<account_name>`
+
+参数：
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `user_token` | 是 | 等同 POST 登录里那个 userToken |
+| `car` / `car_id` | 否 | 账号名称（账号名是唯一的，admin 接口创建时返回 `name` 字段） |
+
+响应：3xx 重定向，没有 JSON body。
+
+| 命中条件 | 跳转目标 |
+| --- | --- |
+| `user_token` 为空 | `/login` |
+| OAuth 校验失败 | `/login?error=login_failed` |
+| 没传 `car` 或 `car` 校验失败 | `/select`（已登录态，让用户自己选车） |
+| `car` 命中可用账号 | `/gemini.google.com/app`（已登录 + 已选车，直接进 Gemini） |
+
+`car` 校验失败的情况：账号不存在 / 已停用 / 没 cookie（`has_cookies=false`）。
+
+典型用法：你的业务后台拼一个链接发给用户：
+
+```
+https://your-host:19081/api/login?user_token=eyJhbGc...&car=mainbox
+```
+
+用户点开 → 镜像走 OAuth → 设置 session → 进入指定的 Gemini 账号。
+
+### 列出可用车辆（系统对接用）
+
+`GET /api/cars`
+
+> 选车界面 / 业务侧拉车辆列表请用这个接口。**不要**用 `/api/admin/accounts/list` —— 那个是 admin 接口，会把每个账号的明文 cookies（`__Secure-1PSID` / `__Secure-1PSIDTS` 等）一并返回，敏感信息会泄露到前端。
+
+```jsonc
+{
+  "accounts": [
+    {
+      "id": 1,
+      "name": "mainbox",
+      "enabled": true,
+      "tier": "ultra",
+      "note": "main account",
+      "has_cookies": true,
+      "today_usage": { "pro": 12, "thinking": 5 },
+      "daily_quota": { "pro": 500, "thinking": 1500 },
+      "load_percent": 1
+    }
+  ]
+}
+```
+
+字段语义：
+
+- `name`：在一键登录链接里当 `car=` 用
+- `tier`：`free` / `pro` / `ultra`
+- `has_cookies`：false 表示这台车 cookie 缺失，**一键登录传它会回退到选车页**
+- `today_usage`：今日各模型已用 prompt 数
+- `daily_quota`：tier 配额，free=10/10、pro=100/300、ultra=500/1500（Fast 不限不在内）
+- `load_percent`：按总配额加权计算的当天负载百分比；100 = 已经用完
+
+典型用法：业务后台展示当前可选车辆 + 各车今日剩余额度，让用户挑或者由你的系统自动选最空闲的那辆，再用一键登录链接送过去。
+
+---
+
+## 管理 gemini 账号和消息的接口
 
 全部 `POST`，所有参数走 JSON body。鉴权头**二选一**：
 
@@ -380,70 +449,3 @@ POST /api/admin/accounts/rotate     { "id": 1 }     # 强制让 Google 给一组
 ```
 
 会同时删掉这个对话下所有轮次的消息记录。
-
----
-
-## 系统对接（你的业务系统调）
-
-### 一键登录直达 Gemini
-
-`GET /api/login?user_token=<token>&car=<account_name>`
-
-参数：
-
-| 参数 | 必填 | 说明 |
-| --- | --- | --- |
-| `user_token` | 是 | 等同 POST 登录里那个 userToken |
-| `car` / `car_id` | 否 | 账号名称（账号名是唯一的，admin 接口创建时返回 `name` 字段） |
-
-响应：3xx 重定向，没有 JSON body。
-
-| 命中条件 | 跳转目标 |
-| --- | --- |
-| `user_token` 为空 | `/login` |
-| OAuth 校验失败 | `/login?error=login_failed` |
-| 没传 `car` 或 `car` 校验失败 | `/select`（已登录态，让用户自己选车） |
-| `car` 命中可用账号 | `/gemini.google.com/app`（已登录 + 已选车，直接进 Gemini） |
-
-`car` 校验失败的情况：账号不存在 / 已停用 / 没 cookie（`has_cookies=false`）。
-
-典型用法：你的业务后台拼一个链接发给用户：
-
-```
-https://your-host:19081/api/login?user_token=eyJhbGc...&car=mainbox
-```
-
-用户点开 → 镜像走 OAuth → 设置 session → 进入指定的 Gemini 账号。
-
-### 列出可用车辆（系统对接用）
-
-`GET /api/cars`
-
-```jsonc
-{
-  "accounts": [
-    {
-      "id": 1,
-      "name": "mainbox",
-      "enabled": true,
-      "tier": "ultra",
-      "note": "main account",
-      "has_cookies": true,
-      "today_usage": { "pro": 12, "thinking": 5 },
-      "daily_quota": { "pro": 500, "thinking": 1500 },
-      "load_percent": 1
-    }
-  ]
-}
-```
-
-字段语义：
-
-- `name`：在一键登录链接里当 `car=` 用
-- `tier`：`free` / `pro` / `ultra`
-- `has_cookies`：false 表示这台车 cookie 缺失，**一键登录传它会回退到选车页**
-- `today_usage`：今日各模型已用 prompt 数
-- `daily_quota`：tier 配额，free=10/10、pro=100/300、ultra=500/1500（Fast 不限不在内）
-- `load_percent`：按总配额加权计算的当天负载百分比；100 = 已经用完
-
-典型用法：业务后台展示当前可选车辆 + 各车今日剩余额度，让用户挑或者由你的系统自动选最空闲的那辆，再用一键登录链接送过去。
