@@ -25,8 +25,6 @@ docker compose up -d
 部署起来后号池是**空的**，必须用 admin 接口添加账号才能用。
 
 ```bash
-LICENSE_KEY=$(grep -E '^[[:space:]]+LICENSE_KEY:' docker-compose.yml | head -n1 | awk '{print $2}')
-
 curl -X POST http://127.0.0.1:19081/api/admin/accounts/create \
   -H "Authorization: Bearer $LICENSE_KEY" \
   -H 'Content-Type: application/json' \
