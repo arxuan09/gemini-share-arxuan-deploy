@@ -2,8 +2,9 @@
 
 ```bash
 # 1. 拉到目标机
-git clone https://github.com/arxuan09/gemini-share-arxuan-deploy.git /opt/gemini-share-arxuan
-cd /opt/gemini-share-arxuan
+cd /root
+git clone https://github.com/arxuan09/gemini-share-arxuan-deploy.git
+cd gemini-share-arxuan-deploy
 
 # 2. 改配置（直接编辑 docker-compose.yml）
 vim docker-compose.yml
