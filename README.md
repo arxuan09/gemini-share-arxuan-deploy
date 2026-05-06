@@ -60,8 +60,6 @@ curl -X POST http://127.0.0.1:19081/api/admin/accounts/create \
 
 ## 你需要实现的 3 个 audit 接口
 
-镜像**调用方**，你**实现方**。三个接口都接收/返回 JSON，HTTP 200 + 业务 code 决定结果。
-
 ### OAuth — 验证 userToken
 
 **触发时机**：用户在 `/login` 页提交 userToken 时。
