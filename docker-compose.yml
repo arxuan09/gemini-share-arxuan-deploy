@@ -34,7 +34,7 @@ services:
       retries: 12
 
   gemini-share-arxuan:
-    image: gemini-share-arxuan:latest
+    image: arxuan09/gemini-share-arxuan:latest
     container_name: gemini-share-arxuan
     restart: unless-stopped
     depends_on:
