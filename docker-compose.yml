@@ -55,7 +55,7 @@ services:
       - "19081:19081"
     volumes:
       - ./data/gemini-share-arxuan:/data
-      - ./enhance.js:/app/js/enhance.js:ro
+      - ./list.js:/app/js/list.js:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:19081/health || exit 1"]
       interval: 15s
