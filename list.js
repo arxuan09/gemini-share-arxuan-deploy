@@ -17,6 +17,57 @@
   let isGeminiAdvanceExport = true;
   var themeBaseUrl = "/";
 
+  // ==================== 用户首页（用户中心）地址 ====================
+  // "返回首页"按钮的目标 URL。优先级：
+  //   1. URL 参数 ?shareUrl=https://...   ← 用户中心给链接里带上
+  //   2. document.referrer 的 origin     ← 来自用户中心的跳转
+  //   3. localStorage 缓存               ← 之前两步成功过就一直用
+  // 任何来源都必须是 http/https 协议（防 javascript:、data: 之类的注入）。
+  // 必须在 IIFE 顶部立刻执行 —— Gemini SPA 启动后会 replaceState 把 URL
+  // 改成 /app，query string 就丢了，等到按钮 onClick 再读就太晚。
+  const HOME_URL_KEY = "gateway_home_url";
+
+  (function captureHomeOnLoad() {
+    function isSafeUrl(u) {
+      return typeof u === "string" && /^https?:\/\//i.test(u);
+    }
+    // Method 1: URL ?shareUrl=
+    try {
+      const param = new URLSearchParams(window.location.search).get("shareUrl");
+      if (isSafeUrl(param)) {
+        localStorage.setItem(HOME_URL_KEY, param);
+        return;
+      }
+    } catch (e) {}
+    // Method 2: document.referrer 跨域 origin（仅当还没缓存过）
+    try {
+      const cached = localStorage.getItem(HOME_URL_KEY);
+      if (cached && isSafeUrl(cached)) return;
+      if (!document.referrer) return;
+      const r = new URL(document.referrer);
+      if (r.origin === window.location.origin) return;
+      if (r.protocol !== "http:" && r.protocol !== "https:") return;
+      localStorage.setItem(HOME_URL_KEY, r.origin);
+    } catch (e) {}
+  })();
+
+  function getHomeUrl() {
+    try {
+      const v = localStorage.getItem(HOME_URL_KEY);
+      if (v && /^https?:\/\//i.test(v)) return v;
+    } catch (e) {}
+    return null;
+  }
+
+  function backToHome() {
+    const url = getHomeUrl();
+    if (!url) {
+      layer.msg("未识别到首页地址，请从用户中心重新进入｜Home URL unavailable, please re-enter from user center", { time: 3500 });
+      return;
+    }
+    window.location.href = url;
+  }
+
   // ==================== 工具函数（自带一份，不共享） ====================
   const layer = window.layer || createLayerFallback();
   ensureDateFormat();
@@ -444,6 +495,11 @@
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/><path d="M19 5v14"/></svg>',
         tooltip: "返回选车｜Select Car",
         onClick: () => backToGeminiSelect(),
+      },
+      {
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
+        tooltip: "返回首页｜Back to Home",
+        onClick: () => backToHome(),
       },
       {
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
