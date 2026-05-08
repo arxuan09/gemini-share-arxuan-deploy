@@ -485,17 +485,21 @@
       if (isOpen) { e.preventDefault(); toggleMenu(); }
     }, { passive: false });
 
+    // 服务端通过 window.__GW_SETTINGS 注入运行时开关；缺失时按"显示"处理。
+    const gwSettings = (typeof window !== "undefined" && window.__GW_SETTINGS) || {};
+    const showBackToSelect = gwSettings.show_back_to_select !== false;
+
     const menuItems = [
       {
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>',
         tooltip: "一键换车｜Switch Car",
         onClick: () => switchGeminiAccount(),
       },
-      {
+      ...(showBackToSelect ? [{
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/><path d="M19 5v14"/></svg>',
         tooltip: "返回选车｜Select Car",
         onClick: () => backToGeminiSelect(),
-      },
+      }] : []),
       {
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
         tooltip: "返回首页｜Back to Home",
