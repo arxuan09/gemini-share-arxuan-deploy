@@ -68,6 +68,29 @@
     window.location.href = url;
   }
 
+  // 打开 Gem 管理页（/gems/view）。没 gem 的用户在原生 UI 里只能从设置进入，
+  // 而设置控件被 hide_elements.js 屏蔽了，于是这里补一条入口。
+  //
+  // 关键：必须用 SPA 客户端路由（pushState + popstate）切过去，**不能整页跳转**。
+  // /gems/view 不在 shouldInjectBootstrap 覆盖的 /app 路径里，整页加载拿不到
+  // proxy_script.js，接口会直连 gemini.google.com 跨站失败。客户端切路由不刷新
+  // 页面，已注入的拦截器还在，接口照样走镜像。
+  function openGemManager() {
+    try {
+      const baseEl = document.querySelector("base");
+      const base = (baseEl && baseEl.getAttribute("href")) || (window.location.origin + "/gemini.google.com/");
+      const target = base.replace(/\/+$/, "") + "/gems/view";
+      if (window.history && typeof window.history.pushState === "function") {
+        window.history.pushState({}, "", target);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+        return;
+      }
+      window.location.href = target;
+    } catch (e) {
+      layer.msg("无法打开 Gem 管理｜Failed to open Gem manager", { time: 3000 });
+    }
+  }
+
   // ==================== 工具函数（自带一份，不共享） ====================
   const layer = window.layer || createLayerFallback();
   ensureDateFormat();
@@ -504,6 +527,11 @@
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>',
         tooltip: "返回首页｜Back to Home",
         onClick: () => backToHome(),
+      },
+      {
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6-10 12L2 9z"/><path d="M11 3 8 9l4 12"/><path d="M13 3l3 6-4 12"/><path d="M2 9h20"/></svg>',
+        tooltip: "Gem 管理｜Gems",
+        onClick: () => openGemManager(),
       },
       {
         icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
