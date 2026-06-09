@@ -22,7 +22,10 @@ docker compose up -d
 
 ## 加 Gemini 账号
 
-部署起来后号池是**空的**，必须用 admin 接口添加账号才能用。
+部署起来后号池是**空的**，需要先加 Gemini 账号才能用。
+
+**推荐**：浏览器打开 `/admin/`（如 `http://your-host:19081/admin/`），用 `LICENSE_KEY`
+登录，在「账号池」里点「添加账号」可视化录入即可，下面的 curl 仅作可选的接口对接参考。
 
 ```bash
 curl -X POST http://127.0.0.1:19081/api/admin/accounts/create \
@@ -242,6 +245,14 @@ https://your-host:19081/api/login?user_token=eyJhbGc...&car=mainbox
 ---
 
 ## 管理 gemini 账号和消息的接口
+
+> **大多数情况下你不需要自己调用下面这些接口。** 镜像已内置一个可视化后台管理台，
+> 浏览器直接打开 `/admin/`（例如 `http://your-host:19081/admin/`），用 `LICENSE_KEY`
+> 登录即可：账号池增删、一键开关账号、刷新 cookie、查/删对话记录、模型重定向等设置
+> 全都有现成界面，开箱即用，无需写任何代码。
+>
+> 下面的 HTTP 接口只是给「想把这些管理操作集成进自己业务系统」的高级场景做参考。
+> 只用内置后台的话，本章可以整段跳过。
 
 全部 `POST`，所有参数走 JSON body。鉴权头**二选一**：
 
