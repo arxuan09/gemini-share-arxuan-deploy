@@ -667,7 +667,13 @@
   // ==================== 导出实现 ====================
   function processMarkdown(content) { return content; }
 
-  function exportAsPdf(markdownContent, filename) {
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+    );
+  }
+
+  function exportAsPdf(markdownContent, filename, title) {
     let loadingIdx = 0;
     try {
       if (!window.jspdf || !window.html2canvas) {
@@ -698,20 +704,16 @@
       if (window.markdownit) {
         const md = window.markdownit({ html: false, breaks: true, linkify: true });
         const header = `<div style="text-align: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 2px solid #e1e4e8;">
-          <h1 style="font-size: 32px; margin: 0 0 10px 0;">${filename.replace(".pdf", "").split("_")[0]}</h1>
+          <h1 style="font-size: 32px; margin: 0 0 10px 0;">${escapeHtml(title != null ? title : filename.replace(/\.pdf$/, ""))}</h1>
           <p style="color: #666; font-size: 14px; margin: 0;">导出时间：${new Date().toLocaleString("zh-CN")}</p>
         </div>`;
         tempDiv.innerHTML += header + md.render(processed);
       } else {
-        tempDiv.innerHTML += processed
-          .replace(/\n/g, "<br>")
-          .replace(/### (.*)/g, "<h3>$1</h3>")
-          .replace(/## (.*)/g, "<h2>$1</h2>")
-          .replace(/# (.*)/g, "<h1>$1</h1>")
-          .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-          .replace(/\*(.*?)\*/g, "<em>$1</em>")
-          .replace(/```([\s\S]*?)```/g, "<pre><code>$1</code></pre>")
-          .replace(/`([^`]+)`/g, "<code>$1</code>");
+        // markdown-it 未加载：原文转义后按纯文本输出，避免对话内容里的 HTML 被执行。
+        tempDiv.innerHTML +=
+          '<pre style="white-space: pre-wrap; word-break: break-word; font-family: inherit;">' +
+          escapeHtml(processed) +
+          "</pre>";
       }
 
       document.body.appendChild(tempDiv);
@@ -727,14 +729,17 @@
         const imgHeight = (canvas.height * contentWidth) / canvas.width;
         const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
-        let remaining = imgHeight, yOffset = 10;
-        pdf.addImage(imgData, "PNG", 10, yOffset, contentWidth, imgHeight);
-        remaining -= pageHeight - 20;
-        while (remaining > 0) {
-          yOffset = remaining - imgHeight;
-          pdf.addPage();
-          pdf.addImage(imgData, "PNG", 10, yOffset, contentWidth, imgHeight);
-          remaining -= pageHeight - 20;
+        // 每页上下各留 margin，页 i 显示长图的 [i*usable, (i+1)*usable) 区段；
+        // 用白色矩形盖住上下边距里溢出的相邻区段，避免内容在页间重复。
+        const margin = 10;
+        const usableHeight = pageHeight - margin * 2;
+        const pageCount = Math.max(1, Math.ceil((imgHeight - 0.5) / usableHeight));
+        for (let i = 0; i < pageCount; i++) {
+          if (i > 0) pdf.addPage();
+          pdf.addImage(imgData, "PNG", 10, margin - i * usableHeight, contentWidth, imgHeight);
+          pdf.setFillColor(255, 255, 255);
+          pdf.rect(0, 0, pageWidth, margin, "F");
+          pdf.rect(0, pageHeight - margin, pageWidth, margin, "F");
         }
         pdf.save(filename);
         layer.close(loadingIdx);
@@ -765,7 +770,7 @@
     if (format === "md") {
       downloadTextAsFile(content, baseFilename + "_" + timestamp + ".md");
     } else if (format === "pdf") {
-      exportAsPdf(content, baseFilename + "_" + timestamp + ".pdf");
+      exportAsPdf(content, baseFilename + "_" + timestamp + ".pdf", convData.title);
     }
   }
 
