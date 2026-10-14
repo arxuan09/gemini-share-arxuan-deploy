@@ -44,6 +44,8 @@ services:
         condition: service_healthy
     environment:
       LICENSE_KEY: test
+      # 审计接口只在首次启动时导入一次，之后以后台「/admin/ → 设置 → 审计接口」为准，
+      # 再改这里不会生效（v1.0.37 起）。OAUTH 和 LIMIT 都不填则进入本地测试模式。
       GEMINI_AUDIT_OAUTH_URL: https://your-audit.example.com/api/v1/audit/oauth
       GEMINI_AUDIT_LIMIT_URL: https://your-audit.example.com/api/v1/audit/limit
       GEMINI_AUDIT_NOTIFY_URL: https://your-audit.example.com/api/v1/audit/notify

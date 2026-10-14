@@ -18,6 +18,13 @@ vim docker-compose.yml
 docker compose up -d
 ```
 
+> **审计接口以后台为准（v1.0.37 起）**：上面三个 `GEMINI_AUDIT_*` 只在**首次启动**时导入一次，
+> 之后到 `/admin/` →「设置 → 审计接口」修改，保存立即生效、无需重启；再改 `docker-compose.yml` 不会生效。
+> 老版本升级上来时会自动导入现有的值，不需要额外操作。
+>
+> **本地测试模式**：`OAUTH` 和 `LIMIT` 都不填（或在后台清空）时，网关不依赖外部审计，
+> 改用后台「测试用户」页建号登录、按模型限制每日次数，适合联调测试；该模式不做内容审核，不建议用于正式运营。
+
 ---
 
 ## 加 Gemini 账号
@@ -149,7 +156,7 @@ Content-Type: application/json
 
 **触发时机**：镜像把 Gemini 响应回写给浏览器之后，异步通知你"这次对话用掉了 1 次"。
 
-`docker-compose.yml` 里 `GEMINI_AUDIT_NOTIFY_URL` 留空 / 删除整行 → 这个接口不会被调，可以不实现。
+后台「设置 → 审计接口」里 Notify 留空（首次部署时即 `docker-compose.yml` 里 `GEMINI_AUDIT_NOTIFY_URL` 留空 / 删除整行）→ 这个接口不会被调，可以不实现。
 
 `POST $GEMINI_AUDIT_NOTIFY_URL`
 
