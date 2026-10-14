@@ -27,6 +27,17 @@ docker compose up -d
 
 ---
 
+## 更新到新版本
+
+```bash
+cd 你的部署目录 && git pull && ./update.sh
+```
+
+`update.sh` 只拉取并重建网关容器（`gemini-share-arxuan`），不动 mysql / redis；新容器起来后自动删除本产品的旧镜像，
+不会碰这台机器上的其它镜像。新版本启动失败时旧镜像还在，可以直接回滚。数据在 mysql / redis 里，更新不会丢。
+
+---
+
 ## 加 Gemini 账号
 
 部署起来后号池是**空的**，需要先加 Gemini 账号才能用。
