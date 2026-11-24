@@ -4,6 +4,7 @@ Gemini 号池共享网关。部署后用户通过你的业务系统登录、选�
 
 - [部署](#部署)：一键脚本 / Docker Compose 两种方式
 - [配置说明（.env）](#配置说明env)
+- [使用外部 MySQL / Redis](#使用外部-mysql--redis不启动自带实例)
 - [更新与老版本迁移](#更新)
 - [添加 Gemini 账号](#添加-gemini-账号)
 - [对接你的用户中心（审计接口）](#对接你的用户中心审计接口)
@@ -69,13 +70,27 @@ docker compose logs -f gemini-share-arxuan         # 看日志，出现 license 
 
 ## 配置说明（.env）
 
-`.env` 里只有三项：
-
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
 | `LICENSE_KEY` | 是 | 授权码 |
 | `ADMIN_PASSWORD` | 否 | 后台密码：管理台 `/admin/` 的登录密码，也是管理接口的 token。不填就用授权码；填了就只能用它登录，授权码不再能进后台 |
 | `GATEWAY_PORT` | 否 | 对外端口，默认 `19081` |
+
+数据库（默认用部署自带的 MySQL / Redis 容器，一般不用改）：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `MYSQL_HOST` | `mysql` | MySQL 地址。`mysql` 即自带容器；用外部 MySQL 时填它的地址 |
+| `MYSQL_PORT` | `3306` | |
+| `MYSQL_USER` | `root` | 自带 MySQL 只支持 `root` |
+| `MYSQL_PASSWORD` | `gemini123` | 用自带 MySQL 时，只在第一次初始化（`data/mysql` 为空）时生效，之后**不要再改** |
+| `MYSQL_DATABASE` | `gemini` | 库名。用外部 MySQL 时需要提前建好 |
+| `REDIS_HOST` | `redis` | Redis 地址。`redis` 即自带容器 |
+| `REDIS_PORT` | `6379` | |
+| `REDIS_PASSWORD` | 空 | Redis 密码。用自带 Redis 时，填了会自动开启密码认证 |
+| `REDIS_DB` | `0` | Redis 库编号（0–15）。多个网关共用一个 Redis 时用不同的编号隔开 |
+
+数据库密码不要包含 `@`、`/`、`:` 这类特殊字符。
 
 修改后执行 `docker compose up -d`（或再跑一次 `./install.sh`）生效。
 
@@ -83,6 +98,61 @@ docker compose logs -f gemini-share-arxuan         # 看日志，出现 license 
 
 - `OAuth` 和 `Limit` 必须**同时填写**（正式运营）或**同时留空**（本地测试模式），`Notify` 可选；
 - 还没填的时候是**本地测试模式**：不对接外部用户中心，改用管理台「测试用户」页建号登录，按模型限制每日次数。不做内容审核，只用于联调测试，不要用于正式运营。
+
+
+### 使用外部 MySQL / Redis（不启动自带实例）
+
+默认会启动自带的 MySQL 和 Redis 容器。已经有自己的 MySQL / Redis 时，可以改成连外部的，并且不再启动自带的实例（可以只换其中一个）。
+
+**1. 准备外部服务**
+
+- MySQL 8：提前建好库，账号要有这个库的全部权限（网关启动时会自动建表）：
+
+  ```sql
+  CREATE DATABASE gemini CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+  ```
+
+- Redis 6 及以上：确定要用的库编号（`REDIS_DB`，0–15）。多个网关共用一个 Redis 时，每个网关用不同的编号。
+
+**2. 改 `.env`**
+
+填 `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE`，以及 `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB`。
+
+网关跑在容器里：外部服务在同一台服务器上时，`HOST` 要填服务器的内网 IP，**不能填 `127.0.0.1` / `localhost`**；对应的 MySQL / Redis 也要监听这个 IP，并允许 Docker 网段（通常是 `172.16.0.0/12`）连接。
+
+**3. 改 `docker-compose.yml`，去掉不用的自带服务**
+
+- 用外部 MySQL：删掉整段 `mysql:` 服务，以及 `gemini-share-arxuan` 下 `depends_on` 里的 `mysql` 那一项；
+- 用外部 Redis：删掉整段 `redis:` 服务，以及 `depends_on` 里的 `redis` 那一项；
+- 两个都用外部：两段服务都删掉，`depends_on` 整个删掉。
+
+**4. 启动**
+
+```bash
+docker compose up -d --remove-orphans     # --remove-orphans 会停掉并删除之前启动过的自带容器
+docker compose logs --tail 50 gemini-share-arxuan    # 没有 database / redis 报错即连接成功
+```
+
+**之前用自带数据库跑过、要把数据搬过去**
+
+- MySQL（账号、对话记录、设置都在这里）：先导出再导入外部库：
+
+  ```bash
+  docker exec gemini-share-arxuan-mysql mysqldump -uroot -p<原 MYSQL_PASSWORD> --single-transaction gemini > gemini.sql
+  mysql -h <外部地址> -u <用户> -p <库名> < gemini.sql
+  ```
+
+- Redis 可以不迁移：账号 Cookie 在 MySQL 里有备份，网关会自动从 MySQL 恢复；只是用户的登录状态会失效，需要重新登录一次。
+
+**以后更新**
+
+因为本地改过 `docker-compose.yml`，`git pull` 前先暂存本地修改：
+
+```bash
+git stash && git pull && git stash pop && ./update.sh
+```
+
+`git stash pop` 提示冲突时，用新版的 `docker-compose.yml` 按第 3 步重新删一次即可。只更新镜像、不拉新部署文件的话，直接 `./update.sh` 就行。
 
 ---
 
@@ -423,6 +493,9 @@ POST /api/admin/turns/cleanup  { "before_days": 90 }   # 删除 90 天前就不�
 
 **想用域名 + HTTPS 访问**
 在网关前面加 Nginx / Caddy 等反向代理，把你的域名转发到 `127.0.0.1:端口`，HTTPS 证书配在反向代理上。
+
+**想用外部的 MySQL / Redis**
+见[使用外部 MySQL / Redis](#使用外部-mysql--redis不启动自带实例)。
 
 **数据在哪里、怎么备份**
 全部在部署目录的 `data/` 下：`data/mysql`（账号、对话记录、设置）、`data/redis`（Cookie 和会话）、`data/gemini-share-arxuan`（静态资源缓存，可以不备份）。备份前先 `docker compose stop`。

@@ -95,7 +95,7 @@ else
     # 数据库密码 / 时区不在 .env 模板里（compose 有默认值）。老部署改过的才写进 .env，
     # 否则数据库已按旧密码初始化，网关会连不上。
     val=$(old_compose_get MYSQL_ROOT_PASSWORD)
-    if [ -n "$val" ] && [ "$val" != "gemini123" ]; then env_set MYSQL_ROOT_PASSWORD "$val"; echo "    MYSQL_ROOT_PASSWORD 已迁移"; fi
+    if [ -n "$val" ] && [ "$val" != "gemini123" ]; then env_set MYSQL_PASSWORD "$val"; echo "    数据库密码已迁移"; fi
     val=$(old_compose_get TZ)
     if [ -n "$val" ] && [ "$val" != "Asia/Shanghai" ]; then env_set TZ "$val"; echo "    TZ 已迁移（$val）"; fi
     echo "    审计接口地址早已保存在数据库里，升级后不受影响"
@@ -115,8 +115,18 @@ else
   fi
 fi
 
+# 兼容：v1.0.53 的 .env 里数据库密码叫 MYSQL_ROOT_PASSWORD，现在统一叫 MYSQL_PASSWORD。
+if [ -n "$(env_get MYSQL_ROOT_PASSWORD)" ] && ! grep -q '^MYSQL_PASSWORD=' .env; then
+  env_set MYSQL_PASSWORD "$(env_get MYSQL_ROOT_PASSWORD)"
+  info "已把 .env 里的 MYSQL_ROOT_PASSWORD 改名为 MYSQL_PASSWORD"
+fi
+
 # 校验
 [ -n "$(env_get LICENSE_KEY)" ] || die "LICENSE_KEY 还没填。请编辑 .env 填写后重新运行 ./install.sh"
+for key in MYSQL_PORT REDIS_PORT REDIS_DB; do
+  val=$(env_get "$key")
+  case "$val" in *[!0-9]*) die "$key 必须是数字：$val" ;; esac
+done
 port=$(env_get GATEWAY_PORT); port=${port:-19081}
 case "$port" in ''|*[!0-9]*) die "GATEWAY_PORT 必须是数字：$port" ;; esac
 

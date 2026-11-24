@@ -1,6 +1,8 @@
 # gemini-share-arxuan 部署文件。
 # 不需要修改这个文件：所有配置都在同目录的 .env 里（模板见 .env.example）。
 # 审计接口（用户中心）部署后在管理台「设置 → 审计接口」配置。
+# MySQL / Redis 默认用下面自带的两个容器；要用外部的、不启动自带实例，
+# 见 README「使用外部 MySQL / Redis」。
 
 services:
   mysql:
@@ -12,8 +14,9 @@ services:
       - --collation-server=utf8mb4_unicode_ci
       - --default-authentication-plugin=caching_sha2_password
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-gemini123}
-      MYSQL_DATABASE: gemini
+      # 自带 MySQL 只建 root 账号，密码和库名取 .env 的 MYSQL_PASSWORD / MYSQL_DATABASE。
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-gemini123}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-gemini}
     volumes:
       - ./data/mysql:/var/lib/mysql
     healthcheck:
@@ -28,11 +31,19 @@ services:
     image: redis:7-alpine
     container_name: gemini-share-arxuan-redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    # .env 设了 REDIS_PASSWORD 时自带 Redis 开启密码认证。
+    command:
+      - sh
+      - -c
+      - 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"; else exec redis-server --appendonly yes; fi'
     volumes:
       - ./data/redis:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - CMD-SHELL
+        - 'if [ -n "$$REDIS_PASSWORD" ]; then redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning ping; else redis-cli ping; fi | grep -q PONG'
       interval: 10s
       timeout: 5s
       retries: 12
@@ -50,8 +61,10 @@ services:
       LICENSE_KEY: ${LICENSE_KEY:?请先在 .env 里填写 LICENSE_KEY（或运行 ./install.sh）}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       GEMINI_GATEWAY_ADDR: 0.0.0.0:19081
-      GEMINI_DB_DSN: root:${MYSQL_ROOT_PASSWORD:-gemini123}@tcp(mysql:3306)/gemini?charset=utf8mb4&parseTime=true
-      GEMINI_REDIS_ADDR: redis:6379
+      GEMINI_DB_DSN: ${MYSQL_USER:-root}:${MYSQL_PASSWORD:-gemini123}@tcp(${MYSQL_HOST:-mysql}:${MYSQL_PORT:-3306})/${MYSQL_DATABASE:-gemini}?charset=utf8mb4&parseTime=true
+      GEMINI_REDIS_ADDR: ${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
+      GEMINI_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      GEMINI_REDIS_DB: ${REDIS_DB:-0}
       TZ: ${TZ:-Asia/Shanghai}
     ports:
       - "${GATEWAY_PORT:-19081}:19081"

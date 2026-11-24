@@ -11,6 +11,12 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+# 兼容：v1.0.53 的 .env 里数据库密码叫 MYSQL_ROOT_PASSWORD，现在统一叫 MYSQL_PASSWORD。
+if grep -q '^MYSQL_ROOT_PASSWORD=.' .env && ! grep -q '^MYSQL_PASSWORD=' .env; then
+  sed -n 's/^MYSQL_ROOT_PASSWORD=/MYSQL_PASSWORD=/p' .env | tail -n 1 >> .env
+  echo "已把 .env 里的 MYSQL_ROOT_PASSWORD 改名为 MYSQL_PASSWORD"
+fi
+
 # 本产品的镜像仓库和 compose 服务名。清理只针对它，绝不动 mysql / redis 或这台机器上的其它镜像。
 IMAGE_REPO="arxuan09/gemini-share-arxuan"
 SERVICE="gemini-share-arxuan"
