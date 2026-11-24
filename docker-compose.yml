@@ -65,6 +65,11 @@ services:
       GEMINI_REDIS_ADDR: ${REDIS_HOST:-redis}:${REDIS_PORT:-6379}
       GEMINI_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       GEMINI_REDIS_DB: ${REDIS_DB:-0}
+      # 多实例（一主多副），单实例部署不用管，见 README「多实例部署」。
+      NODE_ID: ${NODE_ID:-main}
+      NODE_ROLE: ${NODE_ROLE:-primary}
+      PRIMARY_LOST_TIMEOUT: ${PRIMARY_LOST_TIMEOUT:-}
+      REPLICA_REQUIRE_PROXY: ${REPLICA_REQUIRE_PROXY:-}
       TZ: ${TZ:-Asia/Shanghai}
     ports:
       - "${GATEWAY_PORT:-19081}:19081"
