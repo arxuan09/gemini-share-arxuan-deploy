@@ -4,6 +4,13 @@ set -euo pipefail
 
 [ -f docker-compose.yml ] || { echo "请在部署目录内运行（找不到 docker-compose.yml）"; exit 1; }
 
+# 配置已从 docker-compose.yml 挪到 .env。还没有 .env 说明是从老版本升级上来的，
+# 先跑 install.sh（会自动从 docker-compose.old.yml 迁移原配置）。
+if [ ! -f .env ]; then
+  echo "还没有 .env 配置文件。从老版本升级请按 README「从老版本升级」操作，或直接运行 ./install.sh"
+  exit 1
+fi
+
 # 本产品的镜像仓库和 compose 服务名。清理只针对它，绝不动 mysql / redis 或这台机器上的其它镜像。
 IMAGE_REPO="arxuan09/gemini-share-arxuan"
 SERVICE="gemini-share-arxuan"

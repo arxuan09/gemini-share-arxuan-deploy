@@ -1,3 +1,7 @@
+# gemini-share-arxuan 部署文件。
+# 不需要修改这个文件：所有配置都在同目录的 .env 里（模板见 .env.example）。
+# 审计接口（用户中心）部署后在管理台「设置 → 审计接口」配置。
+
 services:
   mysql:
     image: mysql:8.0
@@ -8,14 +12,14 @@ services:
       - --collation-server=utf8mb4_unicode_ci
       - --default-authentication-plugin=caching_sha2_password
     environment:
-      MYSQL_ROOT_PASSWORD: gemini123
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-gemini123}
       MYSQL_DATABASE: gemini
     volumes:
       - ./data/mysql:/var/lib/mysql
     healthcheck:
       test:
         - CMD-SHELL
-        - mysqladmin ping -h 127.0.0.1 -uroot -pgemini123 --silent
+        - mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent
       interval: 10s
       timeout: 5s
       retries: 12
@@ -43,18 +47,14 @@ services:
       redis:
         condition: service_healthy
     environment:
-      LICENSE_KEY: test
-      # 审计接口只在首次启动时导入一次，之后以后台「/admin/ → 设置 → 审计接口」为准，
-      # 再改这里不会生效（v1.0.37 起）。OAUTH 和 LIMIT 都不填则进入本地测试模式。
-      GEMINI_AUDIT_OAUTH_URL: https://your-audit.example.com/api/v1/audit/oauth
-      GEMINI_AUDIT_LIMIT_URL: https://your-audit.example.com/api/v1/audit/limit
-      GEMINI_AUDIT_NOTIFY_URL: https://your-audit.example.com/api/v1/audit/notify
+      LICENSE_KEY: ${LICENSE_KEY:?请先在 .env 里填写 LICENSE_KEY（或运行 ./install.sh）}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       GEMINI_GATEWAY_ADDR: 0.0.0.0:19081
-      GEMINI_DB_DSN: root:gemini123@tcp(mysql:3306)/gemini?charset=utf8mb4&parseTime=true
+      GEMINI_DB_DSN: root:${MYSQL_ROOT_PASSWORD:-gemini123}@tcp(mysql:3306)/gemini?charset=utf8mb4&parseTime=true
       GEMINI_REDIS_ADDR: redis:6379
-      TZ: Asia/Shanghai
+      TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "19081:19081"
+      - "${GATEWAY_PORT:-19081}:19081"
     volumes:
       - ./data/gemini-share-arxuan:/data
       - ./list.js:/app/js/list.js:ro

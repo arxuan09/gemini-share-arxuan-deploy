@@ -1,96 +1,175 @@
-# gemini-share-arxuan
+# gemini-share-arxuan 部署文档
+
+Gemini 号池共享网关。部署后用户通过你的业务系统登录、选车，直接使用 Gemini 网页版；你只需要准备授权码、Gemini 账号，以及（正式运营时）三个审计接口。
+
+- [部署](#部署)：一键脚本 / Docker Compose 两种方式
+- [配置说明（.env）](#配置说明env)
+- [更新与老版本迁移](#更新)
+- [添加 Gemini 账号](#添加-gemini-账号)
+- [对接你的用户中心（审计接口）](#对接你的用户中心审计接口)
+- [业务系统对接](#业务系统对接)
+- [管理接口（可选）](#管理接口可选)
+- [常见问题](#常见问题)
+
+**部署要求**：Linux 服务器、Docker 20.10+、Docker Compose v2（`docker compose` 命令）、能访问 Google。
+
+---
+
+## 部署
+
+两种方式效果一样，选一种即可。所有配置都在 `.env` 文件里，**`docker-compose.yml` 不需要修改**。
+
+### 方式一：一键部署脚本（推荐）
 
 ```bash
-# 1. 拉到目标机
-cd /root
 git clone https://github.com/arxuan09/gemini-share-arxuan-deploy.git
 cd gemini-share-arxuan-deploy
+./install.sh
+```
 
-# 2. 改配置（直接编辑 docker-compose.yml）
-vim docker-compose.yml
-# 把 gemini-share-arxuan.environment 里这四个值改成你的：
-#   LICENSE_KEY:               我给你的授权码
-#   GEMINI_AUDIT_OAUTH_URL:    你的OAUTH接口
-#   GEMINI_AUDIT_LIMIT_URL:    你的发消息限速接口
-#   GEMINI_AUDIT_NOTIFY_URL:   你的计次回调接口（不用就不填）
+脚本会：
 
-# 3. 起服务
+1. 检查 Docker / Docker Compose；
+2. 生成 `.env`，引导你填写授权码、后台密码（可选）和端口；
+3. 准备数据目录、拉取镜像、启动；
+4. 等网关和授权校验就绪后，打印管理台地址。
+
+也可以免交互部署，把配置写在命令前面：
+
+```bash
+LICENSE_KEY=你的授权码 ADMIN_PASSWORD=后台密码 GATEWAY_PORT=19081 ./install.sh
+```
+
+`install.sh` 可以重复运行：已有的 `.env` 不会被覆盖，数据不会丢。改完 `.env` 后再跑一次就会按新配置重启。
+
+### 方式二：Docker Compose
+
+```bash
+git clone https://github.com/arxuan09/gemini-share-arxuan-deploy.git
+cd gemini-share-arxuan-deploy
+cp .env.example .env
+vim .env                 # 填 LICENSE_KEY；可选：后台密码、端口
 docker compose up -d
 ```
 
-> **审计接口以后台为准（v1.0.37 起）**：上面三个 `GEMINI_AUDIT_*` 只在**首次启动**时导入一次，
-> 之后到 `/admin/` →「设置 → 审计接口」修改，保存立即生效、无需重启；再改 `docker-compose.yml` 不会生效。
-> 老版本升级上来时会自动导入现有的值，不需要额外操作。
->
-> **本地测试模式**：`OAUTH` 和 `LIMIT` 都不填（或在后台清空）时，网关不依赖外部审计，
-> 改用后台「测试用户」页建号登录、按模型限制每日次数，适合联调测试；该模式不做内容审核，不建议用于正式运营。
-
----
-
-## 更新到新版本
+启动后检查：
 
 ```bash
-cd 你的部署目录 && git pull && ./update.sh
+docker compose ps                                  # 三个容器都应是 healthy
+docker compose logs -f gemini-share-arxuan         # 看日志，出现 license check: ok 即授权通过
 ```
 
-`update.sh` 只拉取并重建网关容器（`gemini-share-arxuan`），不动 mysql / redis；新容器起来后自动删除本产品的旧镜像，
-不会碰这台机器上的其它镜像。新版本启动失败时旧镜像还在，可以直接回滚。数据在 mysql / redis 里，更新不会丢。
+### 部署完成后
+
+1. 浏览器打开 `http://服务器IP:19081/admin/`，用后台密码登录管理台（没设置 `ADMIN_PASSWORD` 时就是授权码）；
+2. 「设置 → 审计接口」填写你的用户中心接口（见[对接你的用户中心](#对接你的用户中心审计接口)），保存立即生效；
+3. 「账号池」添加 Gemini 账号（**号池默认是空的**，见[添加 Gemini 账号](#添加-gemini-账号)）。
 
 ---
 
-## 加 Gemini 账号
+## 配置说明（.env）
 
-部署起来后号池是**空的**，需要先加 Gemini 账号才能用。
+`.env` 里只有三项：
 
-**推荐**：浏览器打开 `/admin/`（如 `http://your-host:19081/admin/`），用 `LICENSE_KEY`
-登录，在「账号池」里点「添加账号」可视化录入即可，下面的 curl 仅作可选的接口对接参考。
+| 变量 | 必填 | 说明 |
+| --- | --- | --- |
+| `LICENSE_KEY` | 是 | 授权码 |
+| `ADMIN_PASSWORD` | 否 | 后台密码：管理台 `/admin/` 的登录密码，也是管理接口的 token。不填就用授权码；填了就只能用它登录，授权码不再能进后台 |
+| `GATEWAY_PORT` | 否 | 对外端口，默认 `19081` |
+
+修改后执行 `docker compose up -d`（或再跑一次 `./install.sh`）生效。
+
+**审计接口（你的用户中心）不在 `.env` 里**，部署后到管理台「设置 → 审计接口」填写，保存立即生效、无需重启：
+
+- `OAuth` 和 `Limit` 必须**同时填写**（正式运营）或**同时留空**（本地测试模式），`Notify` 可选；
+- 还没填的时候是**本地测试模式**：不对接外部用户中心，改用管理台「测试用户」页建号登录，按模型限制每日次数。不做内容审核，只用于联调测试，不要用于正式运营。
+
+---
+
+## 更新
 
 ```bash
-curl -X POST http://127.0.0.1:19081/api/admin/accounts/create \
-  -H "Authorization: Bearer $LICENSE_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "tier": "ultra",
-    "note": "main account",
-    "proxy": "socks5://user:pass@ip:port",
-    "secure_1psid": "g.a000xxxxxx...",
-    "secure_1psidts": "sidts-xxxxx..."
-  }'
+cd 部署目录
+git pull
+./update.sh
 ```
 
-字段说明：
+`update.sh` 只拉取并重建网关容器，不动 MySQL / Redis；新容器起来后自动删除本产品的旧镜像，不碰这台机器上的其它镜像。新版本启动失败时旧镜像还在，可以回滚。数据都在 `data/` 目录里，更新不会丢。
 
-- `name` 可省，后端自动生成 10 位随机串
-- `tier` 必须是 `free` / `pro` / `ultra` 之一
-- `proxy` 可省（直连）；支持 `http://` / `https://` / `socks5://` / `socks5h://`
-- `secure_1psid` 必填；`secure_1psidts` 浏览器开发者工具能看到就填，看不到就不填（系统会自己刷出）
-- 创建带 cookie 后会**自动**异步初始化，几秒后账号即可使用
+### 从老版本升级（配置还写在 docker-compose.yml 里的）
+
+老版本需要直接改 `docker-compose.yml`，现在配置挪到了 `.env`。直接 `git pull` 会因为本地改过 `docker-compose.yml` 而冲突，按下面的顺序操作一次即可：
+
+```bash
+cd 部署目录
+cp docker-compose.yml docker-compose.old.yml    # 1. 备份原配置
+git checkout -- docker-compose.yml              # 2. 撤销本地修改
+git pull                                        # 3. 拉取新版部署文件
+./install.sh                                    # 4. 自动从 docker-compose.old.yml 生成 .env 并重启
+```
+
+> **暂时不想迁移也没关系**：新版本镜像完全兼容老的 `docker-compose.yml`。不要执行 `git pull`，直接在部署目录运行 `./update.sh`（或 `docker compose pull && docker compose up -d`）就能更新到最新版本，原来的配置照常生效。只是这样拿不到新的部署脚本和文档，想用新方式时再按上面四步迁移一次。
+
+第 4 步会自动把授权码、端口（以及改过的数据库密码）写进 `.env`，不用手抄。审计接口地址早就保存在数据库里，不受影响；数据也不受影响。确认服务正常后可以删除 `docker-compose.old.yml`。之后的更新就是普通的 `git pull && ./update.sh`。
 
 ---
 
-## 概念
+## 添加 Gemini 账号
+
+推荐在管理台「账号池」里操作，有可视化界面。
+
+### Cookie 怎么取
+
+在浏览器里登录 Gemini（gemini.google.com），用开发者工具或 Cookie 导出插件，复制 **gemini.google.com 页面的完整 Cookie**（`名字=值; 名字=值; …` 这种整串）。
+
+- **必须包含 `OSID` / `__Secure-OSID`**。Gemini 2026-11 起登录强依赖它，缺了账号会被判为未登录，而且系统刷新补不回来。只复制 `__Secure-1PSID` 那几个是不够的。
+- 不要手动挑字段，整串一次性复制最稳妥。
+- 管理台列表里标「需补 OSID」的号，需要重新完整导出 Cookie。
+
+### 添加单个账号
+
+「账号池 → 添加账号」，把完整 Cookie 粘进去保存即可：
+
+- 名称可以不填，会自动生成；等级可以选「自动识别」，系统按账号订阅自动同步。
+- 保存时会用这串 Cookie 打开一次 Gemini，**识别出它属于哪个 Google 邮箱**：
+  - 号池里**已经有这个邮箱的号** → 自动按「更新」处理：只替换 Cookie，名称、代理、等级、备注不变；
+  - 没有 → 新建；
+  - Cookie 已失效（未登录） → 直接提示，不保存。
+- 账号列表的名称下方会显示邮箱，搜索框也能按邮箱搜。
+
+### 批量添加 / 更新
+
+「账号池 → 批量加号 / 更新」，**一行粘贴一个号的完整 Cookie**，后台异步处理，弹窗里实时显示每一行的结果（新建 / 更新 / 失败 / 跳过）：
+
+- 已有的号自动更新 Cookie，并按「导入后启用」重新启用（适合给掉线的号统一补 Cookie）；
+- 新号可以选「智能分配代理」（每个新号挑一个最空闲的健康代理），或统一用某个代理、直连；
+- 同一个号出现多行时只用最靠下的一行；失效的 Cookie 不会保存；一次最多 200 行。
+
+### 给掉线的号补 Cookie
+
+号池里的号掉线后（被自动停用 / 标「疑似掉线」），重新登录浏览器、导出完整 Cookie，用「批量加号 / 更新」粘进去即可，会自动认出是哪个号并更新、重新启用。
+
+如果这个号是很早以前加的、还没记录过邮箱（列表里名称下方没有邮箱），先「编辑」它，在「Google 邮箱」里手动填上邮箱，再批量导入，就能正确匹配；否则会被当成新号新建。
+
+---
+
+## 对接你的用户中心（审计接口）
+
+你需要实现三个 HTTP 接口，网关在用户登录、发消息前、对话完成后分别调用。
 
 | 名词 | 含义 |
 | --- | --- |
-| **userToken** | 你的业务系统签发给最终用户的凭证。镜像本身不签发也不解析它，只把它转给你的 audit 接口验真。形态可以是 JWT / UUID / 任意字符串 |
-| **user_id** | audit OAuth 接口返回的稳定用户标识。镜像用它做用户区分和对话归属判断 |
-| **车 / account** | Gemini 账号池里的一辆车，由 admin 接口添加，包含 cookies + tier + proxy |
-| **LICENSE_KEY** | 同时作为 admin 接口 token，没单独 admin token |
+| **userToken** | 你的业务系统签发给最终用户的凭证。网关不签发也不解析，只转给你的接口验证。可以是 JWT / UUID / 任意字符串 |
+| **user_id** | OAuth 接口返回的稳定用户标识，网关用它区分用户、记录对话归属 |
+| **车 / 账号** | 号池里的一个 Gemini 账号 |
 
----
+### OAuth：验证 userToken
 
-## 你需要实现的 3 个 audit 接口
-
-### OAuth — 验证 userToken
-
-**触发时机**：用户在 `/login` 页提交 userToken 时。
-
-`POST $GEMINI_AUDIT_OAUTH_URL`
-
-请求（**注意是 form 编码**，不是 JSON）：
+**调用时机**：用户在登录页提交 userToken，或打开一键登录链接时。
 
 ```
-Content-Type: application/x-www-form-urlencoded
+POST <OAuth 地址>
+Content-Type: application/x-www-form-urlencoded       ← 注意是 form 编码，不是 JSON
 
 userToken=<用户提交的 token 原文>
 ```
@@ -99,137 +178,110 @@ userToken=<用户提交的 token 原文>
 
 ```jsonc
 {
-  "code": 1,                              // 1 = 成功，其他 = 拒绝登录
-  "status": "ok",                         // 仅作日志，可选
-  "user_id": "u_42",                      // 必填，稳定的用户标识
-  "email": "alice@example.com",           // 可选，会展示在管理台
-  "avatar": "https://.../alice.png"       // 可选
+  "code": 1,                       // 1 = 成功，其他 = 拒绝登录
+  "user_id": "u_42",               // 必填，稳定的用户标识
+  "email": "alice@example.com",    // 可选，会展示在管理台
+  "status": "ok",                  // 可选，仅记日志
+  "avatar": "https://..."          // 可选
 }
 ```
 
-行为：
+- `code=1` 且 `user_id` 非空 → 登录成功，会话有效期 30 天；
+- 其他情况（含你的接口返回 4xx/5xx） → 登录失败。
 
-- `code=1` 且 `user_id` 非空 → 登录成功（会话有效期 30 天），用户跳转选车页
-- `code != 1` 或 `user_id` 为空 → 镜像返回 401，前端提示登录失败
-- 你的接口返回 4xx/5xx → 镜像也返回 401，但带原始 message
+### Limit：发消息前准入 / 限速
 
-### Limit — 发消息前限速 / 内容审核
-
-**触发时机**：用户每次点"发送"前，镜像先调一次。这个接口是**强同步阻塞**：你不返回 `approved`，消息就不会发给 Gemini。
-
-`POST $GEMINI_AUDIT_LIMIT_URL`
-
-请求：
+**调用时机**：用户每次发送消息前。**同步阻塞**：不返回 `approved`，消息就不会发给 Gemini。
 
 ```
+POST <Limit 地址>
 Authorization: Bearer <userToken 原文>
 Content-Type: application/json
 
 {
   "action": "next",
-  "model": "gemini-3-pro",                 // 镜像解析的可读模型 ID（见下表）
+  "model": "gemini-4-neon",        // 本轮使用的模型名，见下表
   "messages": [
-    { "content": { "parts": ["用户这条 prompt 的纯文本"] } }
+    { "content": { "parts": ["用户这条消息的纯文本"] } }
   ]
 }
 ```
-
-| `model` 值 | 含义 |
-| --- | --- |
-| `gemini-3-pro` | 标准 / Plus / Advanced 通用 |
-| `gemini-3-flash` | Flash 模型 |
-| `gemini-3-flash-thinking` | Thinking 模型 |
-| `gemini-default` | 兜底（解析不到模型头时） |
 
 期望响应（HTTP 200）：
 
 ```jsonc
 {
-  "status": "approved",       // 字面值；其他任意值都视为拒绝
-  "user_id": "u_42",          // 可选
-  "model": "gemini-3-pro"     // 可选回显
+  "status": "approved",            // 只有这个值算放行，其他任何值都算拒绝
+  "error": "今日次数已用完"          // 拒绝时可选，会原样展示给用户（也可以用 message 字段）
 }
 ```
 
-行为：
+- `status === "approved"` → 放行；
+- 其他（含 4xx/5xx） → 用户看到你返回的 `error` / `message`，没有就显示通用提示。
 
-- `status === "approved"` → 放行
-- 其他 → 镜像返回 403 `audit_rejected` + 你接口里的 message
-- 你的接口 4xx/5xx → 镜像同样 403
+典型实现：按 `user_id` + `model` 查今日已用次数，检查是否超限、关键词、并发，然后返回 `approved` 或拒绝原因。
 
-**典型实现**：
+### Notify：对话完成后计次（可选）
 
-- 按 `user_id` 维度查当日已用次数
-- 检查超限 / 黑名单关键词 / 并发限流
-- 通过 → 返回 `approved`；拒绝 → 返回 `{status:"limited", message:"今日次数已用完"}`
+**调用时机**：一轮对话成功完成后，异步调用。不配置就不会调用。
 
-### Notify — 计次 / 扣费回调（可选）
+请求格式和 Limit 完全一样，期望响应 `{"status": "recorded"}`。返回其他值只记日志，不影响用户，**不要**用它阻塞业务。
 
-**触发时机**：镜像把 Gemini 响应回写给浏览器之后，异步通知你"这次对话用掉了 1 次"。
+### 模型名
 
-后台「设置 → 审计接口」里 Notify 留空（首次部署时即 `docker-compose.yml` 里 `GEMINI_AUDIT_NOTIFY_URL` 留空 / 删除整行）→ 这个接口不会被调，可以不实现。
+`model` 字段是网关识别出的模型名，用来按模型分别限速：
 
-`POST $GEMINI_AUDIT_NOTIFY_URL`
+| `model` | 对应 Gemini 网页版 |
+| --- | --- |
+| `gemini-4-neon` | 4 Neon（更深入的分析） |
+| `gemini-4-hydrogen` | 4 Hydrogen（日常帮助）；Workspace 号的 4 Hydrogen |
+| `gemini-auto` | Pro 号的「自动」档 |
+| `gemini-4-carbon` | 4 Carbon（代码和复杂工作，Ultra） |
+| `gemini-4-argon` | 4 Argon |
+| `gemini-4-hydrogen-thinking` | Workspace 号的 4 Hydrogen Thinking |
+| `gemini-3-pro` | Workspace 号的 3.1 Pro |
+| `gemini-3-flash` | 免费号的 Auto；Ultra 的 3.5 Flash-Lite |
+| `gemini-3-flash-thinking` | Ultra 的 Flash Thinking |
+| `gemini-default` | 识别不出模型时的兜底 |
 
-请求和 Limit 完全一样：
-
-```
-Authorization: Bearer <userToken 原文>
-Content-Type: application/json
-
-{ "action": "next", "model": "gemini-3-pro", "messages": [...] }
-```
-
-期望响应：
-
-```json
-{ "status": "recorded" }
-```
-
-行为：
-
-- `status === "recorded"` → 计次成功
-- 其他 → 镜像端忽略，不影响用户。**不要**用这个接口阻塞业务
+- Google 会不定期调整模型，**以管理台「模型说明」页为准**，那里列出当前所有模型名及识别来源。
+- 不想按模型区分时，打开管理台「设置 → 统一模型名」，所有请求都发 `gemini-default`。
+- 开启「Pro 降级」时，被降级的请求按**实际使用的模型**发送。
+- 限速服务里没有为某个模型名配置额度的话，等于对这个模型不限速。模型名变化时记得同步你那边的配置。
 
 ---
 
-## 系统对接（你的业务系统调）
+## 业务系统对接
 
 ### 一键登录直达 Gemini
 
-`GET /api/login?user_token=<token>&car=<account_name>`
-
-参数：
+```
+GET /api/login?user_token=<token>&car=<账号名>
+```
 
 | 参数 | 必填 | 说明 |
 | --- | --- | --- |
-| `user_token` | 是 | 等同 POST 登录里那个 userToken |
-| `car` / `car_id` | 否 | 账号名称（账号名是唯一的，admin 接口创建时返回 `name` 字段） |
+| `user_token` | 是 | 同 OAuth 里的 userToken |
+| `car`（或 `car_id`） | 否 | 账号名称（管理台账号列表里的「名称」） |
 
-响应：3xx 重定向，没有 JSON body。
+返回 302 跳转：
 
-| 命中条件 | 跳转目标 |
+| 情况 | 跳转到 |
 | --- | --- |
-| `user_token` 为空 | `/login` |
-| OAuth 校验失败 | `/login?error=login_failed` |
-| 没传 `car` 或 `car` 校验失败 | `/select`（已登录态，让用户自己选车） |
-| `car` 命中可用账号 | `/gemini.google.com/app`（已登录 + 已选车，直接进 Gemini） |
+| 没传 `user_token` | `/login` |
+| OAuth 验证失败 | `/login?error=login_failed` |
+| 没传 `car`，或该账号不存在 / 已停用 / 没有 Cookie | `/select`（已登录，让用户自己选车） |
+| `car` 是可用账号 | 直接进入 Gemini |
 
-`car` 校验失败的情况：账号不存在 / 已停用 / 没 cookie（`has_cookies=false`）。
+用法：你的业务后台拼好链接发给用户，例如 `https://你的域名/api/login?user_token=eyJhbGc...&car=mainbox`。
 
-典型用法：你的业务后台拼一个链接发给用户：
+### 列出可用的车
 
 ```
-https://your-host:19081/api/login?user_token=eyJhbGc...&car=mainbox
+GET /api/cars
 ```
 
-用户点开 → 镜像走 OAuth → 设置 session → 进入指定的 Gemini 账号。
-
-### 列出可用车辆（系统对接用）
-
-`GET /api/cars`
-
-> 选车界面 / 业务侧拉车辆列表请用这个接口。**不要**用 `/api/admin/accounts/list` —— 那个是 admin 接口，会把每个账号的明文 cookies（`__Secure-1PSID` / `__Secure-1PSIDTS` 等）一并返回，敏感信息会泄露到前端。
+公开接口，不需要鉴权，给你的选车界面用。**不要**在前端调用 `/api/admin/accounts/list`，那是管理接口，会返回账号的明文 Cookie。
 
 ```jsonc
 {
@@ -238,243 +290,149 @@ https://your-host:19081/api/login?user_token=eyJhbGc...&car=mainbox
       "id": 1,
       "name": "mainbox",
       "enabled": true,
-      "tier": "ultra",
+      "tier": "pro",
       "note": "main account",
       "has_cookies": true,
       "today_usage": { "pro": 12, "thinking": 5 },
-      "daily_quota": { "pro": 500, "thinking": 1500 },
-      "load_percent": 1
+      "daily_quota": { "pro": 100, "thinking": 300 },
+      "load_percent": 12
     }
   ]
 }
 ```
 
-字段语义：
-
-- `name`：在一键登录链接里当 `car=` 用
-- `tier`：`free` / `pro` / `ultra`
-- `has_cookies`：false 表示这台车 cookie 缺失，**一键登录传它会回退到选车页**
-- `today_usage`：今日各模型已用 prompt 数
-- `daily_quota`：tier 配额，free=10/10、pro=100/300、ultra=500/1500（Fast 不限不在内）
-- `load_percent`：按总配额加权计算的当天负载百分比；100 = 已经用完
-
-典型用法：业务后台展示当前可选车辆 + 各车今日剩余额度，让用户挑或者由你的系统自动选最空闲的那辆，再用一键登录链接送过去。
+- `name`：一键登录链接里的 `car=`；
+- `has_cookies=false`：这辆车缺 Cookie，一键登录传它会回到选车页；
+- `load_percent`：负载百分比（100 = 用满）。优先按 Gemini 官方用量（5 小时 / 每周额度）计算，拿不到时按今日提问次数和等级配额估算（free 10/10、pro 100/300、ultra 500/1500）；
+- 管理台开启了「虚拟车」时，列表里还会有按等级聚合的虚拟车，用户选它会被分到同等级负载最低的真车。
 
 ---
 
-## 管理 gemini 账号和消息的接口
+## 管理接口（可选）
 
-> **大多数情况下你不需要自己调用下面这些接口。** 镜像已内置一个可视化后台管理台，
-> 浏览器直接打开 `/admin/`（例如 `http://your-host:19081/admin/`），用 `LICENSE_KEY`
-> 登录即可：账号池增删、一键开关账号、刷新 cookie、查/删对话记录、模型重定向等设置
-> 全都有现成界面，开箱即用，无需写任何代码。
->
-> 下面的 HTTP 接口只是给「想把这些管理操作集成进自己业务系统」的高级场景做参考。
-> 只用内置后台的话，本章可以整段跳过。
+> 大多数情况下不需要调用这些接口：管理台 `/admin/` 已经覆盖账号、代理、对话记录、设置等全部操作。下面只给想把管理操作集成进自己系统的场景参考。
 
-全部 `POST`，所有参数走 JSON body。鉴权头**二选一**：
+全部是 `POST` + JSON body，鉴权头二选一（后台密码即 `ADMIN_PASSWORD`，没设置时是授权码）：
 
 ```
-Authorization: Bearer $LICENSE_KEY
-# 或
-X-Admin-Token: $LICENSE_KEY
+Authorization: Bearer <后台密码>
+X-Admin-Token: <后台密码>
 ```
 
-不带 / 错误 → HTTP 401 `unauthorized`。
-
-### 账号列表
-
-`POST /api/admin/accounts/list`
-
-```jsonc
-{
-  "enabled": true,         // 可选，过滤启用状态
-  "q": "car-1"             // 可选，按 name / note 模糊匹配
-}
-```
-
-响应：
-
-```jsonc
-{
-  "accounts": [
-    {
-      "id": 1,
-      "name": "g7Hk2mQ4Bx",
-      "enabled": true,
-      "tier": "ultra",
-      "proxy": "socks5://...",
-      "note": "main",
-      "last_error": "",
-      "last_bootstrap_at": "2026-05-06T21:17:51+08:00",
-      "created_at": "...",
-      "updated_at": "...",
-      "has_cookies": true,
-      "cookies": {                                  // ← admin 列表会带明文 cookies
-        "__Secure-1PSID": { "value": "g.a000...", "expires_at": 1782999999 },
-        "__Secure-1PSIDTS": { "value": "sidts-..." }
-      }
-    }
-  ]
-}
-```
-
-### 创建账号
+### 添加账号
 
 `POST /api/admin/accounts/create`
 
 ```jsonc
 {
-  "name": "car-1",                          // 可省；省略则后端生成 10 位 [A-Za-z0-9]
-  "enabled": true,                          // 可省，默认 true
-  "tier": "ultra",                          // free / pro / ultra
-  "proxy": "socks5://user:pass@ip:port",    // 可省（直连）
-  "note": "main account",                   // 可省
-  "secure_1psid": "g.a000xxxxxx...",        // 必填
-  "secure_1psidts": "sidts-xxxxx..."        // 开发者工具能看到就填，看不到就不填
+  "cookie_header": "__Secure-1PSID=...; OSID=...; __Secure-OSID=...; SAPISID=...; ...",  // 完整 Cookie
+  "name": "car-1",            // 可省，自动生成 10 位随机名
+  "tier": "",                 // 可省 = 自动识别；或 free / pro / ultra
+  "enabled": true,            // 可省，默认 true
+  "proxy": "socks5://user:pass@ip:port",   // 可省 = 直连；支持 http / https / socks5 / socks5h
+  "proxy_id": 3,              // 可省，引用代理池里的代理（优先于 proxy）
+  "note": "备注"               // 可省
 }
 ```
 
-返回 201。**带 cookie 创建** → 自动异步初始化，几秒后账号即可使用。
+返回：
 
-错误：
-
-- 409 `account_name_taken` —— 名称冲突
-- 400 `bad_request` —— tier 非法 / proxy URL 无效
+- `201 {"account": {...}, "matched": false, "email": "..."}`：新建；
+- `200 {"account": {...}, "matched": true, "email": "..."}`：识别出是已有账号，已按更新处理；
+- 识别不出邮箱（例如代理不通）时照常新建，并附带 `probe_error` 说明原因；
+- 错误：`400 cookie_signed_out`（Cookie 已失效，未保存）、`409 account_name_taken`、`400 bad_request` / `proxy_not_found`。
 
 ### 编辑账号
 
-`POST /api/admin/accounts/update`
+`POST /api/admin/accounts/update`，只传要改的字段：
 
 ```jsonc
 {
   "id": 1,
-  "name": "car-1-renamed",         // 可省
-  "tier": "pro",                   // 可省
-  "proxy": "",                     // 传空字符串 = 改为直连；省略 = 不动
-  "note": "...",                   // 可省
-  "enabled": false,                // 可省
-  "secure_1psid": "g.a000...",     // 可省；传了就自动重新初始化
-  "secure_1psidts": "sidts-..."    // 开发者工具能看到就填，看不到就不填
+  "name": "car-1-renamed",
+  "tier": "pro",
+  "enabled": false,
+  "proxy": "",               // 空字符串 = 改为直连；不传 = 不动
+  "note": "...",
+  "email": "abc@gmail.com",  // 手动指定 Google 邮箱（空字符串 = 清空）
+  "cookie_header": "..."     // 换 Cookie，见下
 }
 ```
 
-`secure_1psid` 字段一旦传入（即使和原值相同）就会触发账号重新初始化；只想改名字 / tier / proxy / note 时**不要**带这两个字段。
+- 不传 Cookie：只改资料，不影响登录状态；
+- Cookie 里**带** `__Secure-1PSID`：视为换号，清空旧状态后用新 Cookie 重新登录；
+- Cookie 里**不带** `__Secure-1PSID`（例如只补一个 `OSID=...`）：合并进现有 Cookie，不重置登录；
+- 错误：`409 cookie_belongs_to_other_account`（这串 Cookie 属于另一个账号）、`409 account_email_taken`（邮箱已被其他账号使用）、`400 cookie_signed_out`。
 
-### 详情 / 删除 / 重新初始化 / 强制刷新
+### 批量添加 / 更新
 
 ```
-POST /api/admin/accounts/get        { "id": 1 }     # 同 list 单条
-POST /api/admin/accounts/delete     { "id": 1 }     # 删除账号
-POST /api/admin/accounts/bootstrap  { "id": 1 }     # 强制重新初始化
-POST /api/admin/accounts/rotate     { "id": 1 }     # 强制让 Google 给一组新 cookie
+POST /api/admin/accounts/batch-import         提交任务，立即返回 job
+POST /api/admin/accounts/batch-import-status  查进度和逐行结果
 ```
-
-### 对话审计
-
-镜像会自动落库每个用户和 Gemini 的对话，admin 可以查询、删除。常用于内容合规、客服回查、用户清空请求。
-
-#### turns/list — 列对话摘要
-
-`POST /api/admin/turns/list`
-
-请求体（所有参数可选；不传任何参数返回全量分页结果）：
 
 ```jsonc
+// batch-import
 {
-  "user_id": "u_42",                  // 精确过滤某用户
-  "account_id": 1,                    // 精确过滤某车
-  "conversation_id": "c_xxx",         // 精确匹配
-  "cid": "...",                       // 同 conversation_id，但会同时匹配最近一次的候选 id
-  "request_uuid": "...",              // 精确匹配最近一次请求 id
-  "q": "...",                         // 按对话标题模糊搜索
-  "model": "gemini-3-pro",            // 模型名 LIKE 过滤
-  "limit": 100,                       // 默认 100
-  "offset": 0                         // 默认 0
+  "cookies_text": "第一个号的完整 Cookie\n第二个号的完整 Cookie\n...",
+  "mode": "smart",           // smart = 每个新号自动分配健康代理；不传则用 proxy_id / proxy，都不传 = 直连
+  "enabled": true,
+  "tier": "",
+  "note": "11 月批次"
 }
+// batch-import-status
+{ "job_id": "..." }          // 不传 job_id 返回最近一个任务
 ```
 
-响应：
+任务记录只保存在内存里（最近 20 个），网关重启后清空；已经处理完的行已经入库，不受影响。
 
-```jsonc
-{
-  "turns": [
-    {
-      "id": 123,
-      "user_id": "u_42",
-      "account_id": 1,
-      "conversation_id": "c_1f3f50e2302be440",
-      "title": "Brainstorm 命名",
-      "model_id": "gemini-3-pro",
-      "model_tail": 0,
-      "status_code": 200,
-      "turn_count": 7,
-      "last_request_id": "req-...",
-      "last_response_id": "resp-...",
-      "last_candidate_id": "...",
-      "created_at": "2026-05-06T20:00:00+08:00",
-      "updated_at": "2026-05-06T20:30:00+08:00"
-    }
-  ]
-}
+### 其它账号接口
+
+```
+POST /api/admin/accounts/list       { "enabled": true, "q": "关键词" }   # q 匹配名称 / 备注 / 邮箱；返回含明文 Cookie
+POST /api/admin/accounts/get        { "id": 1 }
+POST /api/admin/accounts/delete     { "id": 1 }
+POST /api/admin/accounts/bootstrap  { "id": 1 }     # 立即重新初始化
+POST /api/admin/accounts/rotate     { "id": 1 }     # 立即换发一次 Cookie
+POST /api/admin/accounts/batch-set-proxy  { "account_ids": [1,2], "mode": "smart" }   # mode: smart / fixed（带 proxy_id）/ clear
 ```
 
-> 列表只返回对话**摘要**，不带每一轮的 prompt / assistant 全文。要看正文用 `turns/get`。
+### 对话记录
 
-#### turns/get — 详情（含全部消息）
+网关会保存每位用户经过网关的对话，用于合规审查、客服回查。
 
-`POST /api/admin/turns/get`
-
-```json
-{ "id": 123 }
+```
+POST /api/admin/turns/list     # 对话摘要列表（可按 user_id / account_id / conversation_id / q / model 过滤，limit / offset 分页）
+POST /api/admin/turns/get      { "id": 123 }     # 详情，含每一轮的提问和回答全文
+POST /api/admin/turns/delete   { "id": 123 }     # 删除一段对话及其全部消息
+POST /api/admin/turns/cleanup  { "before_days": 90 }   # 删除 90 天前就不再活跃的对话
 ```
 
-响应：在 list 单条的基础上多一个 `messages` 数组，每条是一轮 prompt + assistant：
+---
 
-```jsonc
-{
-  "turn": {
-    "id": 123,
-    "user_id": "u_42",
-    "account_id": 1,
-    "conversation_id": "c_1f3f50e2302be440",
-    "title": "Brainstorm 命名",
-    "model_id": "gemini-3-pro",
-    "turn_count": 7,
-    "created_at": "...",
-    "updated_at": "...",
-    "messages": [
-      {
-        "id": 1001,
-        "sequence": 1,
-        "request_uuid": "req-...",
-        "model_hint": "gemini-3-pro",
-        "model_id": "gemini-3-pro",
-        "language": "zh-CN",
-        "status_code": 200,
-        "created_at": "...",
-        "prompt": "用户的原始问题文本",
-        "assistant_text": "Gemini 的完整回复文本"
-      }
-    ]
-  }
-}
+## 常见问题
+
+**所有页面都返回 503**
+授权校验没通过。确认 `.env` 里的 `LICENSE_KEY` 正确、这台服务器的公网 IP 已授权：`docker compose logs gemini-share-arxuan | grep -i license`。查出口 IP 用了多个公共接口互为备份，网络临时故障时 30 秒后自动重试。
+
+**审计接口在哪改**
+管理台「设置 → 审计接口」，保存立即生效。
+
+**账号标「需补 OSID」/ 被自动停用 / 标「疑似掉线」**
+重新登录浏览器，导出包含 `OSID` 的完整 Cookie，用「批量加号 / 更新」粘进去即可。
+
+**想用域名 + HTTPS 访问**
+在网关前面加 Nginx / Caddy 等反向代理，把你的域名转发到 `127.0.0.1:端口`，HTTPS 证书配在反向代理上。
+
+**数据在哪里、怎么备份**
+全部在部署目录的 `data/` 下：`data/mysql`（账号、对话记录、设置）、`data/redis`（Cookie 和会话）、`data/gemini-share-arxuan`（静态资源缓存，可以不备份）。备份前先 `docker compose stop`。
+
+**查看日志 / 重启**
+
+```bash
+docker compose logs -f --tail 200 gemini-share-arxuan
+docker compose restart gemini-share-arxuan
 ```
 
-`prompt` 和 `assistant_text` 是该轮对话的完整明文。
-
-#### turns/delete — 删除一条对话
-
-`POST /api/admin/turns/delete`
-
-```json
-{ "id": 123 }
-```
-
-响应：
-
-```json
-{ "deleted": 1 }
-```
-
-会同时删掉这个对话下所有轮次的消息记录。
+**忘了后台密码**
+看部署目录 `.env` 里的 `ADMIN_PASSWORD`；改了之后 `docker compose up -d` 生效。没设置时后台密码就是授权码。
