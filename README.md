@@ -50,6 +50,7 @@ git clone https://github.com/arxuan09/gemini-share-arxuan-deploy.git
 cd gemini-share-arxuan-deploy
 cp .env.example .env
 vim .env                 # 填 LICENSE_KEY；可选：后台密码、端口
+mkdir -p data/gemini-share-arxuan && sudo chown 100:101 data/gemini-share-arxuan   # 网关进程要能写这个目录
 docker compose up -d
 ```
 
@@ -167,23 +168,22 @@ git stash && git pull && git stash pop && ./update.sh
 
 按上面的方式一或方式二正常部署。主实例自带的 MySQL / Redis 要让副实例能连上：建议改用外部 MySQL / Redis（见上一节）；用自带容器的话，需要你自己把 3306 / 6379 端口开放给副实例服务器，并且**一定要设置 `REDIS_PASSWORD` 和强 MySQL 密码，并用防火墙只允许副实例 IP 访问**。
 
-主实例的 `.env`：
-
-```bash
-NODE_ID=main
-NODE_ROLE=primary
-```
+主实例的 `.env` 保持默认即可（`NODE_ROLE=primary`）。
 
 **2. 部署副实例**
 
-在副实例服务器上拉部署文件，按「使用外部 MySQL / Redis」删掉自带的 `mysql` / `redis` 两个服务，`.env` 里的 MySQL / Redis 配置**和主实例完全一样**（包括 `REDIS_DB`，地址填主实例能被访问到的地址），再改两行：
+在副实例服务器上拉部署文件，按「使用外部 MySQL / Redis」删掉自带的 `mysql` / `redis` 两个服务，`.env` 里的 MySQL / Redis 配置**和主实例完全一样**（包括 `REDIS_DB`，地址填主实例能被访问到的地址），再改一行：
 
 ```bash
-NODE_ID=hk-1          # 每台不同
 NODE_ROLE=replica
 ```
 
-然后 `docker compose up -d`。
+然后执行 `./update.sh`（它会创建数据目录、设置好权限再启动；不要直接 `docker compose up -d`，否则节点名保存不下来）。
+
+节点名 `NODE_ID` 可以不填：副实例第一次启动时会自动生成一个（比如 `node-3fa9c1`），保存在 `data/gemini-share-arxuan/node_id`，以后重启、升级都不变。想在「节点」页看到好认的名字，就填 `NODE_ID=hk-1` 这种，每台不同。
+
+- 照抄主实例的 `.env` 也没关系：旧版本生成的 `.env` 里写着 `NODE_ID=main`，副实例会自动忽略这个名字（`main` 只给主实例用）。
+- **不要连 `data` 目录一起复制到另一台**，否则两台会用同一个节点名（日志会报错提示；删掉复制过去的 `data/gemini-share-arxuan/node_id` 再重启即可）。
 
 **3. 授权**
 
@@ -305,6 +305,24 @@ userToken=<用户提交的 token 原文>
 - `code=1` 且 `user_id` 非空 → 登录成功，会话有效期 30 天；
 - 其他情况（含你的接口返回 4xx/5xx） → 登录失败。
 
+**拒绝时给用户看的提示**：拒绝登录时在响应里带上 `msg`，网关会把它原样显示给用户。比如没有权限、会员过期：
+
+```jsonc
+{
+  "code": 0,                                   // 不为 1 即拒绝
+  "msg": "您还没有开通 Gemini 权限，请联系客服"   // 展示给用户的一句话，最长 200 字
+}
+```
+
+- `msg` 必须是字符串。没有 `msg` 时也会读 `message` 字段。
+- 返回 HTTP 200 且 `code` 不为 1，或者返回 4xx 且内容是 JSON，都算「拒绝」：有 `msg` 显示 `msg`；没有时，一键登录显示「您还没有Gemini权限，请购买后使用」，登录页手动输入显示「登录失败，请检查 userToken 是否正确」。
+- 返回 5xx、内容不是 JSON、连不上或超时，算「服务不可用」，统一显示「登录服务暂时不可用，请稍后重试」（5xx 里的错误信息不会给用户看，免得把数据库报错之类的内部信息露出去）。
+- 调用 `POST /api/login` 的业务系统：失败时返回 HTTP 401 `{"error":"login_failed","message":"<上面这句提示>"}`。
+- **一键登录**（`GET /api/login?user_token=...`，用户从你的系统点进来）失败时，不会出现输入 userToken 的登录页，而是显示一个只有这句提示的页面（拒绝返回 HTTP 403，服务不可用返回 503），**4 秒后自动跳回用户来的网站**。跳转地址：
+  - 用户从你的网站点链接进来时，跳回你的网站首页（来源网站的根地址）。想跳回具体页面，在一键登录链接里带上 `&shareUrl=https://你的网站/某个页面`，**必须和用户来的网站同域名**才会生效。
+  - 你的网站设置了不发送来源（`Referrer-Policy: no-referrer`）时，跳回用户上次成功进入 Gemini 时记下的首页地址；没有记录就只显示提示和「请返回首页重新进入」，不跳转。
+- 用户在网关登录页手动输入 userToken 时，提示显示在输入框下方。
+
 ### Limit：发消息前准入 / 限速
 
 **调用时机**：用户每次发送消息前。**同步阻塞**：不返回 `approved`，消息就不会发给 Gemini。
@@ -379,13 +397,14 @@ GET /api/login?user_token=<token>&car=<账号名>
 | --- | --- | --- |
 | `user_token` | 是 | 同 OAuth 里的 userToken |
 | `car`（或 `car_id`） | 否 | 账号名称（管理台账号列表里的「名称」） |
+| `shareUrl` | 否 | 登录失败时提示页跳回的地址，必须和用户来的网站同域名，见上文 OAuth 一节 |
 
-返回 302 跳转：
+结果：
 
-| 情况 | 跳转到 |
+| 情况 | 结果 |
 | --- | --- |
-| 没传 `user_token` | `/login` |
-| OAuth 验证失败 | `/login?error=login_failed` |
+| 没传 `user_token` | 302 跳到 `/login` |
+| OAuth 验证失败 | 不跳登录页：显示提示页（403 / 503），4 秒后跳回用户来的网站，见上文 OAuth 一节 |
 | 没传 `car`，或该账号不存在 / 已停用 / 没有 Cookie | `/select`（已登录，让用户自己选车） |
 | `car` 是可用账号 | 直接进入 Gemini |
 
