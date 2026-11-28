@@ -296,11 +296,17 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
+        proxy_buffer_size 64k;          # 必须：否则进入 Gemini 页面会 502（响应头太大）
+        proxy_buffers 8 64k;
+        proxy_busy_buffers_size 128k;
         proxy_buffering off;
         proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
     }
 }
 ```
+
+   A 前面用的是 Nginx Proxy Manager 的话，在新建的 Proxy Host 的 Advanced 里填 `proxy_buffer_size` 到 `proxy_send_timeout` 这几行。套了好几层反代的，每一层都要加。
 
    先 `nginx -t`，再 reload。
 
@@ -311,7 +317,7 @@ curl -s --resolve <B域名>:443:<A的IP> https://<B域名>/health   # 证书还�
 curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' --resolve <B域名>:443:<A的IP> "https://<B域名>/api/login?user_token=<I8 测试 token>"
 ```
 
-   **预期**：`/health` 返回 ok；一键登录返回 302/303，跳到选车页或 Gemini 页面。如果返回 403 提示页，说明这个域名没识别成租户 `$TENANT`，或者 B 的用户中心拒绝了这个 token，停下来查。
+   **预期**：`/health` 返回 ok；一键登录返回 302/303，跳到选车页或 Gemini 页面。验收时如果一进 Gemini 页面就 502，而且错误页底部显示 `nginx` / `openresty`，说明反代缓冲区没调大，回到第 1 步检查每一层反代。如果返回 403 提示页，说明这个域名没识别成租户 `$TENANT`，或者 B 的用户中心拒绝了这个 token，停下来查。
 
 3. **把 B 域名的 DNS 改成 A 的 IP**（或者改 B 那边的 nginx，转发到 A）。等 DNS 生效：`dig +short <B域名>` 返回 A 的 IP。
 4. **验收**（让人或你用浏览器操作。注意：用的是测试 userToken 登录网关，不是直接用号池 Cookie 访问 Google，所以不违反安全规则 1）：

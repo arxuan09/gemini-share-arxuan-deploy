@@ -3,6 +3,7 @@
 Gemini 号池共享网关。部署后用户通过你的业务系统登录、选车，直接使用 Gemini 网页版；你只需要准备授权码、Gemini 账号，以及（正式运营时）三个审计接口。
 
 - [部署](#部署)：一键脚本 / Docker Compose 两种方式
+  - [用域名 + HTTPS 访问（反向代理配置）](#用域名--https-访问反向代理配置)：**进入 Gemini 页面 502 的看这里**
 - [配置说明（.env）](#配置说明env)
 - [使用外部 MySQL / Redis](#使用外部-mysql--redis不启动自带实例)
 - [更新与老版本迁移](#更新)
@@ -70,6 +71,64 @@ docker compose logs -f gemini-share-arxuan         # 看日志，出现 license 
 1. 浏览器打开 `http://服务器IP:19081/admin/`，用后台密码登录管理台（没设置 `ADMIN_PASSWORD` 时就是授权码）；
 2. 「设置 → 审计接口」填写你的用户中心接口（见[对接你的用户中心](#对接你的用户中心审计接口)），保存立即生效；
 3. 「账号池」添加 Gemini 账号（**号池默认是空的**，见[添加 Gemini 账号](#添加-gemini-账号)）。
+
+### 用域名 + HTTPS 访问（反向代理配置）
+
+正式使用时，一般在网关前面加一层反向代理（nginx、宝塔、Nginx Proxy Manager、Caddy 等），把你的域名转发到 `127.0.0.1:端口`，HTTPS 证书配在反向代理上。
+
+**注意：反向代理一定要按下面的配置调大缓冲区，否则打开 Gemini 页面会 502。** Gemini 页面的响应头很大（Google 的安全策略头就有好几 KB），nginx / openresty 默认的缓冲区只有 4K–8K，放不下就直接返回 502：
+
+- 这时 `/health`、登录页、选车页都正常，只有进入 `/gemini.google.com/app` 时报 502；
+- 错误页底部显示的是 `nginx` 或 `openresty`，说明是反代返回的，不是网关；
+- 反代的错误日志里会有 `upstream sent too big header while reading response header from upstream`。
+
+另外两点也要配上：
+
+- **关闭缓冲**：对话回复是一边生成一边传回来的，反代缓冲会让回复卡住、最后才整段出来；
+- **加长超时**：生成长回复、生图、生视频时，连接会持续较久。
+
+**nginx / 宝塔**：宝塔在「网站 → 设置 → 反向代理 → 配置文件」里改。
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:19081;
+    proxy_set_header Host $host;                 # 必须：网关靠它识别域名（多用户中心）
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+
+    proxy_buffer_size 64k;                       # 必须：否则进入 Gemini 页面 502
+    proxy_buffers 8 64k;
+    proxy_busy_buffers_size 128k;
+
+    proxy_buffering off;                         # 回复流式输出
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+}
+```
+
+**Nginx Proxy Manager**：Proxy Host → Edit → **Advanced** 选项卡，把下面几行填进 Custom Nginx Configuration，保存即生效。NPM 默认已经带上 Host 头，不用另外加。
+
+```nginx
+proxy_buffer_size 64k;
+proxy_buffers 8 64k;
+proxy_busy_buffers_size 128k;
+proxy_buffering off;
+proxy_read_timeout 600s;
+proxy_send_timeout 600s;
+```
+
+**套了好几层反代的**，比如 Nginx Proxy Manager → 宝塔 nginx → 网关：**每一层都要加**。哪一层没加，哪一层就会报 502，看错误页底部显示的是 `openresty` 还是 `nginx`，就知道是哪一层。
+
+**Caddy** 没有这个缓冲区限制，只需要关闭缓冲：
+
+```
+你的域名 {
+    reverse_proxy 127.0.0.1:19081 {
+        flush_interval -1
+    }
+}
+```
 
 ---
 
@@ -444,23 +503,7 @@ GET /api/cars
 前面「对接你的用户中心」里配的审计接口就是**默认用户中心**。再接一个站点时：
 
 1. **给新站点准备一个域名**（子域名就行，比如 `gemini.b.com`），解析到网关所在的服务器。网关就是靠访问的域名来区分站点的。
-2. **nginx 加上这个域名**，转发到网关，并且必须带上 Host 头（不带的话网关认不出是哪个站点）：
-
-   ```nginx
-   server {
-       server_name gemini.b.com;
-       # listen / 证书配置照抄现有的
-       location / {
-           proxy_pass http://127.0.0.1:19081;
-           proxy_set_header Host $host;
-           proxy_set_header X-Forwarded-Proto $scheme;
-           proxy_http_version 1.1;
-           proxy_set_header Connection "";
-           proxy_buffering off;
-           proxy_read_timeout 600s;
-       }
-   }
-   ```
+2. **反向代理加上这个域名**，转发到网关。新域名的 server 块里，`location /` 照抄[反向代理配置](#用域名--https-访问反向代理配置)里的那段。必须带上 Host 头（不带的话网关认不出是哪个站点），缓冲区也要调大（否则进入 Gemini 页面会 502）。
 
 3. **管理台「用户中心」页 → 新建用户中心**：
    - 名称：随便起，管理台里看的；
@@ -693,7 +736,13 @@ POST /api/admin/turns/cleanup  { "before_days": 90 }   # 删除 90 天前就不�
 重新登录浏览器，导出包含 `OSID` 的完整 Cookie，用「批量加号 / 更新」粘进去即可。
 
 **想用域名 + HTTPS 访问**
-在网关前面加 Nginx / Caddy 等反向代理，把你的域名转发到 `127.0.0.1:端口`，HTTPS 证书配在反向代理上。
+在网关前面加反向代理，配置见[用域名 + HTTPS 访问（反向代理配置）](#用域名--https-访问反向代理配置)。
+
+**登录、选车都正常，一进入 Gemini 页面就 502**
+是前面的反向代理缓冲区太小，放不下 Gemini 页面的响应头（错误页底部显示 `nginx` / `openresty`，不是网关报的）。按[反向代理配置](#用域名--https-访问反向代理配置)调大 `proxy_buffer_size` 等几项；套了好几层反代（比如 Nginx Proxy Manager → 宝塔）的每一层都要改。
+
+**对话回复卡住、最后才整段出来，或者生成到一半断掉**
+反向代理没有关闭缓冲或超时太短，同样按[反向代理配置](#用域名--https-访问反向代理配置)处理。
 
 **想用外部的 MySQL / Redis**
 见[使用外部 MySQL / Redis](#使用外部-mysql--redis不启动自带实例)。
